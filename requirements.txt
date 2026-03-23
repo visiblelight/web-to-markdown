@@ -1,0 +1,3 @@
+scrapling
+html2text
+boto3

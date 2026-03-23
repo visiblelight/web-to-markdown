@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+venv/
+.venv/
+
+# MinIO data
+server/data/
+server/.env
+
+# Temp/images
+tmp/
+
+# OS
+.DS_Store
