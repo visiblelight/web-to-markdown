@@ -1,14 +1,33 @@
+name: web-images
+
 services:
   minio:
     image: minio/minio:latest
     container_name: web-images-minio
+    restart: unless-stopped
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9443:9443"
+      - "127.0.0.1:9001:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
-      - ./data:/data
-    command: server /data --console-address ":9001"
+      - minio_data:/data
+      - minio_certs:/certs:ro
+    command: server /data --certs-dir /certs --address :9443 --console-address :9001
+
+  certbot:
+    image: certbot/certbot
     restart: unless-stopped
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - minio_certs:/certs
+      - jvs_certbot_webroot:/var/www/certbot
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet --deploy-hook 'cp /etc/letsencrypt/live/minio.ke.run/fullchain.pem /certs/public.crt && cp /etc/letsencrypt/live/minio.ke.run/privkey.pem /certs/private.key'; sleep 12h & wait $${!}; done"
+
+volumes:
+  minio_data:
+  letsencrypt:
+  minio_certs:
+  jvs_certbot_webroot:
+    external: true

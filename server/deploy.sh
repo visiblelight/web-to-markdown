@@ -11,12 +11,36 @@ if [ ! -f .env ]; then
 fi
 source .env
 
-echo "==> Starting MinIO..."
+# Validate required vars
+: "${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}"
+: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}"
+
+# Check jvs certbot webroot volume exists
+if ! docker volume ls --format '{{.Name}}' | grep -q "^jvs_certbot_webroot$"; then
+    echo "Error: Docker volume 'jvs_certbot_webroot' not found."
+    echo "       Make sure the jvs project is running first."
+    exit 1
+fi
+
+echo "==> Issuing SSL certificate for minio.ke.run..."
+docker compose run --rm --entrypoint certbot certbot certonly \
+    --webroot -w /var/www/certbot \
+    -d minio.ke.run \
+    --register-unsafely-without-email \
+    --agree-tos \
+    --keep-until-expiring
+
+echo "==> Copying certificates to MinIO certs volume..."
+docker compose run --rm --entrypoint sh certbot -c \
+    "cp /etc/letsencrypt/live/minio.ke.run/fullchain.pem /certs/public.crt && \
+     cp /etc/letsencrypt/live/minio.ke.run/privkey.pem /certs/private.key"
+
+echo "==> Starting MinIO and certbot..."
 docker compose up -d
 
 echo "==> Waiting for MinIO to be ready..."
 for i in $(seq 1 30); do
-    if curl -sf http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+    if curl -sk https://localhost:9443/minio/health/live >/dev/null 2>&1; then
         echo "    MinIO is ready."
         break
     fi
@@ -35,7 +59,7 @@ if ! command -v mc &>/dev/null; then
 fi
 
 echo "==> Configuring mc alias..."
-mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+mc alias set local https://minio.ke.run:9443 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
 
 echo "==> Creating bucket 'web-images'..."
 mc mb --ignore-existing local/web-images
@@ -43,7 +67,17 @@ mc mb --ignore-existing local/web-images
 echo "==> Setting bucket to public read..."
 mc anonymous set download local/web-images
 
-echo "==> Done! MinIO is running."
-echo "    API:     http://localhost:9000"
-echo "    Console: http://localhost:9001"
-echo "    Bucket:  web-images (public read)"
+echo "==> Setting up daily cron to restart MinIO (ensures renewed certs take effect)..."
+(crontab -l 2>/dev/null | grep -v "web-images-minio"; echo "0 3 * * * docker restart web-images-minio") | crontab -
+
+echo ""
+echo "==> Done!"
+echo "    MinIO API:     https://minio.ke.run:9443"
+echo "    MinIO Console: https://localhost:9001"
+echo ""
+echo "    Machine A 环境变量配置："
+echo "      MINIO_ENDPOINT=https://minio.ke.run:9443"
+echo "      MINIO_ACCESS_KEY=$MINIO_ROOT_USER"
+echo "      MINIO_SECRET_KEY=<your password>"
+echo "      MINIO_BUCKET=web-images"
+echo "      MINIO_PUBLIC_URL=https://minio.ke.run:9443"
